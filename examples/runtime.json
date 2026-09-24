@@ -1,0 +1,12 @@
+{
+  "address": "192.168.50.10",
+  "port": 8767,
+  "gateway_address": "192.168.50.10",
+  "gateway_port": 22,
+  "gateway_user": "maintenance",
+  "host_key_alias": "docker-maintenance-center",
+  "key_file": "/run/secrets/gateway_ed25519",
+  "known_hosts": "/run/secrets/known_hosts",
+  "mode": "shadow",
+  "observe_enabled": false
+}

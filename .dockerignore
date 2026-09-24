@@ -1,0 +1,10 @@
+*
+!Dockerfile
+!requirements.lock
+!maintenance_center/
+!maintenance_center/**
+!LICENSE
+!third_party/
+!third_party/**
+**/__pycache__/
+**/*.pyc

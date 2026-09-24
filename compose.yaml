@@ -1,0 +1,33 @@
+name: docker-maintenance-center
+services:
+  maintenance:
+    build: .
+    image: docker-maintenance-center:0.1.0
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    labels:
+      io.docker-maintenance-center.protected: "true"
+    restart: unless-stopped
+    stop_grace_period: 8h
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    ports:
+      - "${DMC_BIND_ADDRESS:?Set DMC_BIND_ADDRESS to the private LAN IPv4 in config/runtime.json}:8767:8767"
+    volumes:
+      - type: bind
+        source: ./state
+        target: /state
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./secrets
+        target: /run/secrets
+        read_only: true
+        bind: {create_host_path: false}

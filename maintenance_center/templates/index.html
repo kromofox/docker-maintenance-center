@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{% if page == 'operation' and operation.status == 'running' %}<meta http-equiv="refresh" content="5">{% endif %}<title>白名单 Docker 维护中心</title><link rel="stylesheet" href="/static/app.css"></head>
+<body>
+<header><a class="brand" href="/">白名单 Docker 维护中心</a><span class="badge">{{{'demo':'本地演示 · 未连接 NAS','shadow':'NAS · 只读影子模式','active':'NAS 维护中心'}[mode]}}</span></header>
+{% if authenticated %}<nav>
+{% for target,label in [('overview','项目总览'),('projects','项目管理'),('schedule','自动更新计划'),('audit','操作记录'),('maintenance','故障与恢复'),('telegram','Telegram 设置')] %}<a href="{{'/' if target == 'overview' else '/' + target}}" {% if page == target or (target == 'projects' and page.startswith('registry')) %}aria-current="page"{% endif %}>{{label}}</a>{% endfor %}
+<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{csrf}}"><button>退出登录</button></form></nav>{% endif %}
+<main>
+{% set health_labels = {'healthy':'运行正常','running_no_probe':'运行中（无健康探针）','degraded':'运行异常','not_deployed':'未部署','unknown':'状态未知','unavailable':'查询不可用'} %}
+{% if page in ['login','initialize','recover'] %}
+<h1>{{{'login':'管理员登录','initialize':'初始化管理员','recover':'恢复管理员账户'}[page]}}</h1>
+<form class="settings credentials" method="post"><input type="hidden" name="csrf" value="{{csrf}}">
+{% if page != 'login' %}<label class="field">{{'初始化码' if page == 'initialize' else '恢复码'}}<input name="code" type="password" required autocomplete="off" maxlength="100"></label>{% endif %}
+<label class="field">用户名<input name="name" required autocomplete="username" maxlength="40"></label>
+<label class="field">密码<input name="password" type="password" required autocomplete="{{'current-password' if page == 'login' else 'new-password'}}" {% if page != 'login' %}minlength="12"{% endif %} maxlength="256"></label>
+<button class="primary">{{'登录' if page == 'login' else '保存管理员账户'}}</button></form>
+<div class="actions"><a href="/login">登录</a><a href="/initialize">首次初始化</a><a href="/recover">恢复账户</a></div>
+{% elif page.startswith('registry') %}
+{% include 'project_management.html' %}
+{% elif page == 'overview' %}
+<div class="heading"><h1>项目总览</h1><span class="muted">{{ projects|length }} 个白名单项目</span></div>
+<div class="summary"><div><strong>{{running_count}}</strong><span>运行中</span></div><div><strong>{{automatic_count}}</strong><span>自动更新</span></div><div><strong>{{ state.paused_projects|length }}</strong><span>维护暂停</span></div></div>
+<div class="table-wrap"><table><thead><tr><th>项目</th><th>运行状态</th><th>当前版本</th><th>更新方式</th><th></th></tr></thead><tbody>{% for item in items %}{% set policy = catalog.get(item.project,{}).get('policy','auto') %}<tr><td><a href="/project/{{item.project}}">{{names[item.project]}}</a><small>{{item.project}}</small></td><td><span>{{health_labels.get(item.overall,'状态未知')}}</span></td><td class="mono">{% for container in item.containers %}{{container.version or '未知'}}{% if not loop.last %}<br>{% endif %}{% else %}未知{% endfor %}</td><td>{{'故障暂停' if item.project in state.paused_projects else '仅检查通知' if policy == 'notify' else '人工批准' if policy == 'manual' else '自动更新' if state.enabled and item.project in state.targets else '周期暂停或未加入计划'}}</td><td><a href="/project/{{item.project}}">详情 →</a></td></tr>{% endfor %}</tbody></table></div>
+{% elif page == 'project' %}
+<a class="back" href="/">← 项目总览</a><div class="heading"><h1>{{names[project]}}</h1><span>{{health_labels.get(item.overall,'状态未知')}}</span></div>
+{% for container in item.containers %}<h2>{{container.name}}</h2><dl><dt>当前版本</dt><dd class="mono">{{container.version or '未知'}}</dd><dt>镜像摘要</dt><dd class="mono digest">{{container.image_id}}</dd></dl>{% endfor %}<dl><dt>恢复边界</dt><dd>保留一个旧版本恢复点。只有经过验证的专用备份方案才支持数据恢复；明确豁免备份的项目不承诺数据回滚。具体保护与健康策略见项目高级设置。</dd></dl>
+<div class="actions">{% for action, label in [('update','检查更新'),('accept','验收当前版本')] %}{% if action == 'update' or (catalog.get(project,{}).get('adapter') == 'mv3' and action == 'accept') %}<form method="post" action="/plan/{{project}}/{{action}}"><input type="hidden" name="csrf" value="{{csrf}}"><button>{{label}}</button></form>{% endif %}{% endfor %}{% if project in catalog %}<a href="/projects/{{project}}/settings">高级设置</a>{% endif %}</div>
+<div class="heading"><h2>最近日志</h2><form method="get"><label>行数 <select name="tail">{% for n in [20,50,100,200] %}<option {% if tail==n %}selected{% endif %}>{{n}}</option>{% endfor %}</select></label> <button>刷新日志</button></form></div><pre>{% for c in logs.containers %}{{c.service or c.name or ''}} {{c.container or ''}}
+{{c.lines|join('\n') if c.lines is defined else c.logs}}
+{% endfor %}</pre>
+{% elif page == 'schedule' %}
+<h1>自动更新计划</h1><form class="settings" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="revision" value="{{state.revision}}"><label class="check"><input type="checkbox" name="enabled" value="yes" {% if state.enabled %}checked{% endif %}>启用自动更新</label><label class="field">统一检查周期 <span><input type="number" name="hours" min="1" max="720" value="{{state.hours}}" required> 小时</span></label><fieldset><legend>参与项目</legend>{% for p in projects %}<label class="check"><input type="checkbox" name="projects" value="{{p}}" {% if p in state.targets %}checked{% endif %}>{{names[p]}}{% if p in state.paused_projects %}<span class="badge">故障暂停</span>{% endif %}</label>{% endfor %}</fieldset><button class="primary">保存计划</button></form>
+{% elif page == 'plan' %}
+<h1>{{{'update':'更新确认','accept':'当前版本验收确认'}[action]}}</h1><p>{{names[project]}}</p>
+<dl><dt>更新前版本</dt><dd>{{plan.current_text}}</dd><dt>目标版本</dt><dd>{{plan.target_text}}</dd><dt>有效期至</dt><dd>{{plan.expires_at|shanghai}}</dd>{% for item in plan.details.images %}<dt>{{item.service}}</dt><dd class="mono">{{item.current or '未知'}} → {{item.target or '未知'}}</dd>{% endfor %}</dl>
+<p class="notice">{% if action == 'accept' %}核对当前版本健康与恢复材料，标记验收；不会在验收时删除恢复版本。{% else %}将执行更新，并按该项目的恢复边界进行健康验收。{% endif %}</p><form method="post" action="/approve"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="ref" value="{{ref}}"><div class="actions"><button class="primary">确认{{{'update':'更新','accept':'验收'}[action]}}</button><a href="/project/{{project}}">返回项目</a></div></form>
+{% elif page == 'operation' %}
+<h1>操作状态</h1><p>{{{'running':'已提交，正在执行','succeeded':'操作成功','failed':'操作失败','unknown':'结果尚未确认'}.get(operation.status,'结果尚未确认')}}</p><p class="mono">{{operation.code}}</p>
+{% for item in pending %}<dl><dt>项目</dt><dd>{{names[item.project]}}</dd><dt>操作编号</dt><dd class="mono digest">{{item.request_id}}</dd><dt>开始时间</dt><dd>{{item.created|shanghai}}</dd></dl>{% endfor %}
+<div class="actions"><a href="/maintenance">故障与恢复</a><a href="/audit">操作记录</a><a href="/">项目总览</a></div>
+{% elif page == 'maintenance' %}
+<h1>故障与恢复</h1><p>写操作：{{'可用' if state.gate == 'ready' else '已暂停'}} <span class="mono">{{state.gate}}</span></p>
+{% for item in pending %}<section class="recovery-item"><h2>{{names[item.project]}} · {{item.action}}</h2><dl><dt>操作编号</dt><dd class="mono digest">{{item.request_id}}</dd><dt>状态</dt><dd>{{item.status}} / {{item.code}}</dd><dt>发起时间</dt><dd>{{item.created|shanghai}}</dd><dt>恢复状态</dt><dd>{{recovery_labels.get(item.recovery,'未知')}}</dd></dl>{% if item.action in ['accept','restart'] %}<p class="notice">响应丢失时，请先重新对账读取宿主持久回执。仍为未知时，由NAS管理员按特殊动作恢复说明核实业务并确认；不能强制清除记录或重复执行。</p>{% endif %}</section>{% else %}<p>没有待对账的操作。</p>{% endfor %}
+<form method="post" action="/maintenance/reconcile"><input type="hidden" name="csrf" value="{{csrf}}"><button>重新对账</button></form>
+<h2>暂停自动更新的项目</h2>{% for project,code in state.paused_projects.items() %}<section class="recovery-item"><h2>{{names[project]}}</h2><p class="mono">{{code}}</p><p>{{"下一轮自动复查，符合条件时重试一次" if project in state.retry_pending else "需要人工处理后恢复自动更新"}}</p><a href="/maintenance/diagnostics/{{project}}">导出失败诊断日志</a> · <a href="/project/{{project}}">查看当前容器日志</a><form method="post" action="/maintenance/resume/{{project}}"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="event_ref" value="{{state.pause_refs[project]}}"><label class="check"><input type="checkbox" name="confirmed" value="yes" required>已核对业务状态并处理故障，允许恢复该项目自动更新</label><button {% if state.gate != 'ready' %}disabled{% endif %}>恢复自动更新</button></form></section>{% else %}<p>无暂停项目。</p>{% endfor %}
+<h2>最近失败记录</h2><p>保存失败摘要及失败后采集的容器日志；历史未采集的日志不会补造。导出文件分享前请检查业务隐私。</p>
+{% for failure in failures %}<details><summary>{{names[failure.project]}} · {{failure.created|shanghai}} · {{failure.code}}</summary><p>操作编号：{{failure.request_id}} · 恢复结果：{{recovery_labels.get(failure.recovery, '未知')}}</p><a href="/maintenance/diagnostics/{{failure.project}}">导出失败诊断日志</a>{% if failure.logs.available %}<p>日志采集时间：{{failure.captured|shanghai}}（失败后最近200行，可能包含回退后的输出）</p>{% for container in failure.logs.containers %}<pre>{{container.lines|join('\n')}}</pre>{% endfor %}{% else %}<p>当次容器日志未采集或已过保留范围。</p>{% endif %}</details>{% else %}<p>无失败记录。</p>{% endfor %}
+{% elif page == 'telegram' %}
+<h1>Telegram 设置</h1>
+<dl><dt>Token 状态</dt><dd>{{'已配置' if telegram.configured else '未配置'}}</dd><dt>连接状态</dt><dd>{{{'not_configured':'未配置','verified':'身份验证通过，等待连接','connected':'已连接','disconnected':'连接中断','key_unavailable':'密钥不可用'}.get(connection,'尚未连接')}}</dd><dt>Bot 身份</dt><dd>{{('@' + telegram.username) if telegram.username else '尚未验证'}}</dd><dt>管理员</dt><dd>{{telegram.user_id if telegram.bound else '未绑定'}}</dd></dl>
+{% if telegram.error %}<p class="notice">加密密钥缺失、权限不正确或无法解密。请在本机恢复独立密钥文件；原密钥无法恢复时，需要重新配置 Token。<br><span class="mono">{{telegram.error}}</span></p>{% endif %}
+<form class="settings credentials" method="post" action="/telegram/token"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="revision" value="{{telegram.revision}}"><label class="field">新 Bot Token<input type="password" name="token" autocomplete="off" maxlength="121" required {% if not telegram.key_ready %}disabled{% endif %}></label><button class="primary" {% if not telegram.key_ready %}disabled{% endif %}>验证并保存</button></form>
+{% if telegram.configured %}<div class="actions">{% for action,label in [('bind','重新绑定管理员' if telegram.bound else '生成绑定码'),('unbind','解除绑定'),('delete','删除 Token')] %}<form method="post" action="/telegram/{{action}}"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="revision" value="{{telegram.revision}}"><button class="{{'danger' if action == 'delete' else ''}}">{{label}}</button></form>{% endfor %}</div>{% endif %}
+{% elif page == 'binding' %}
+<h1>绑定 Telegram 管理员</h1><p>绑定码十分钟内有效，只能使用一次。</p><p class="mono">/bind {{binding_code}}</p><a href="/telegram">返回 Telegram 设置</a>
+{% elif page == 'audit' %}
+<h1>操作记录</h1>
+<form class="audit-filters" method="get">
+<label>开始时间（上海）<input type="datetime-local" name="start" value="{{filters.start}}"></label><label>结束时间（上海）<input type="datetime-local" name="end" value="{{filters.end}}"></label>
+<label>项目<select name="project"><option value="">全部项目</option>{% for project in historical_projects %}<option value="{{project}}" {% if filters.project == project %}selected{% endif %}>{{names[project]}}</option>{% endfor %}</select></label>
+<label>动作<select name="action"><option value="">全部动作</option>{% for action in audit_actions %}<option value="{{action}}" {% if filters.action == action %}selected{% endif %}>{{audit_labels.get(action,action)}}</option>{% endfor %}</select></label>
+<label>结果<select name="result"><option value="">全部结果</option>{% for result in audit_results %}<option value="{{result}}" {% if filters.result == result %}selected{% endif %}>{{{'recorded':'已记录','running':'已提交','succeeded':'成功','failed':'失败','unknown':'结果未知'}[result]}}</option>{% endfor %}</select></label><button>筛选</button><a href="/audit">清除筛选</a></form>
+<div class="table-wrap"><table><thead><tr><th>时间（上海）</th><th>入口</th><th>项目</th><th>动作</th><th>结果</th><th>错误码</th><th>操作编号</th></tr></thead><tbody>{% for r in rows %}<tr><td class="mono">{{r.time|shanghai}}</td><td>{{{'web':'网页','telegram':'Telegram','system':'系统','schedule':'自动计划'}.get(r.actor,r.actor)}}</td><td>{{names.get(r.project,'系统')}}</td><td>{{audit_labels.get(r.display_action,r.display_action)}}</td><td>{{{'recorded':'已记录','running':'已提交','succeeded':'成功','failed':'失败','unknown':'结果未知'}.get(r.result,'历史记录')}}</td><td class="mono">{{r.code|error_text}}</td><td class="mono">{{r.request_id or '—'}}</td></tr>{% else %}<tr><td colspan="7">没有符合条件的记录。</td></tr>{% endfor %}</tbody></table></div>
+{% if next_url %}<div class="actions"><a href="{{next_url}}">更早记录 →</a></div>{% endif %}
+{% else %}<h1>{{message}}</h1><p class="mono">{{detail}}</p><a href="/">返回项目总览</a>{% endif %}
+</main><footer>project007 · V{{version}} · {{'本地演示' if mode == 'demo' else '只读影子模式' if mode == 'shadow' else 'NAS'}}</footer></body></html>

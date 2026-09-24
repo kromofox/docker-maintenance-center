@@ -1,0 +1,35 @@
+{% if page == 'registry' %}
+<div class="heading"><h1>项目管理</h1><a href="/projects/add">添加已有 Compose 项目</a></div>
+<p>解除接管不会停止容器或删除业务数据。历史记录与恢复材料保留。</p>
+<div class="table-wrap"><table><thead><tr><th>项目</th><th>服务</th><th>维护策略</th><th>数据保护</th><th>操作</th></tr></thead><tbody>
+{% for item in registry.projects if item.active %}<tr><td><a href="/project/{{item.id}}">{{item.name}}</a><small>{{item.id}}</small></td><td>{{item.services|join('、')}}</td><td>{{{'auto':'自动更新','manual':'检查后人工批准','notify':'仅检查通知'}[item.policy]}}</td><td>{{'已明确豁免备份' if item.backup_exempt else '专用备份保护'}}<small>{{item.health.mode}} 健康检查</small></td><td><a href="/projects/{{item.id}}/settings">高级设置</a> · <a href="/projects/{{item.id}}/remove">解除接管</a></td></tr>{% else %}<tr><td colspan="5">尚无受管项目。添加项目后才会执行维护。</td></tr>{% endfor %}
+</tbody></table></div>
+<h2>首次检查</h2><p>接管后立即排队检查；自动策略下有更新即执行。人工暂停全局周期不会取消这次授权，安全停写仍会阻止执行。不会改变全局下一轮时间。</p>
+<div class="table-wrap"><table><thead><tr><th>项目</th><th>状态</th><th>结果</th></tr></thead><tbody>{% for job in registry.initial_checks %}<tr><td>{{names.get(job.project,job.project)}}</td><td>{{{'pending':'排队或安全门禁等待','running':'检查或执行中','succeeded':'完成','failed':'失败','unknown':'结果未知，待对账','cancelled':'已取消'}.get(job.status,job.status)}}</td><td>{{job.code|error_text}}</td></tr>{% else %}<tr><td colspan="3">没有首次检查任务。</td></tr>{% endfor %}</tbody></table></div>
+<details><summary>已解除接管的项目</summary>{% for item in registry.projects if not item.active %}<p>{{item.name}}（{{item.id}}） · <a href="/audit?project={{item.id}}">历史记录</a></p>{% else %}<p>暂无。</p>{% endfor %}</details>
+{% elif page == 'registry_add' %}
+<a class="back" href="/projects">返回项目管理</a><h1>添加已有 Compose 项目</h1>
+<p>允许目录：{{roots|join('、')}}。不会部署新应用；先只读核对当前容器、Compose 和挂载。</p>
+{% for item in discovery.candidates %}<section class="recovery-item"><h2>{{item.name}}</h2><p class="mono">{{item.compose_path}}</p><form method="post" action="/projects/preview"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="compose_path" value="{{item.compose_path}}"><fieldset><legend>选择作为一个维护单元的服务</legend>{% for service in item.services %}<label class="check"><input type="checkbox" name="services" value="{{service}}" checked>{{service}}</label>{% endfor %}</fieldset><button>只读预检</button></form></section>{% else %}<p>没有发现可接管的项目，可手工指定允许目录内的 Compose 文件。</p>{% endfor %}
+<details><summary>手工指定已有项目</summary><form class="settings" method="post" action="/projects/preview"><input type="hidden" name="csrf" value="{{csrf}}"><label class="field">Compose 绝对路径<input name="compose_path" required></label><label class="field">服务名（英文逗号分隔）<input name="service_names" required></label><button>只读预检</button></form></details>
+{% elif page == 'registry_preview' or page == 'registry_settings' %}
+{% set item = preview.definition if page == 'registry_preview' else definition %}
+<a class="back" href="/projects">返回项目管理</a><h1>{{'确认接管' if page == 'registry_preview' else '高级设置'}} · {{item.name}}</h1>
+<dl><dt>项目标识</dt><dd>{{item.id}}</dd><dt>Compose</dt><dd class="mono">{{item.compose_path}}</dd><dt>服务</dt><dd>{{item.services|join('、')}}</dd><dt>保护适配</dt><dd>{{item.adapter}}</dd></dl>
+{% if page == 'registry_preview' %}<h2>识别出的持久化挂载</h2>{% for mount in preview.mounts %}<p class="mono">{{mount.service}}：{{mount.source}} → {{mount.target}}（{{mount.type}}）</p>{% endfor %}{% for warning in preview.warnings %}<p class="warning">{{warning}}</p>{% endfor %}{% if not preview.backup_supported %}<p class="warning">此项目没有经过验证的专用备份适配。若继续，必须明确豁免备份；系统不承诺数据恢复。</p>{% endif %}{% endif %}
+<form class="settings" method="post" action="{{'/projects/enroll' if page == 'registry_preview' else '/projects/' + item.id + '/settings'}}">
+<input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="registry_revision" value="{{preview.registry_revision if page == 'registry_preview' else registry_revision}}">
+{% if page == 'registry_preview' %}<input type="hidden" name="handle" value="{{handle}}"><label class="field">显示名称<input name="name" maxlength="80" value="{{item.name}}" required></label>{% endif %}
+<label class="field">维护策略<select name="policy">{% for value,label in [('auto','自动更新'),('manual','定期检查，人工批准更新'),('notify','仅检查通知')] %}<option value="{{value}}" {% if item.policy == value %}selected{% endif %}>{{label}}</option>{% endfor %}</select></label>
+<fieldset><legend>备份范围</legend>{% for path in item.backup_paths %}<label class="check"><input type="checkbox" name="backup_paths" value="{{path}}" checked>{{path}}</label>{% else %}<p>没有可用的专用备份范围。识别到挂载不等于具备一致性备份能力。</p>{% endfor %}</fieldset>
+<label class="check"><input type="checkbox" name="backup_exempt" value="yes" {% if item.backup_exempt %}checked{% endif %}>明确豁免本项目的更新前备份</label>
+<label class="check"><input type="checkbox" name="confirm_risk" value="yes">若豁免：我确认可能无法恢复业务数据，保留旧镜像不等于可回滚数据</label>
+<label class="field">健康检查<select name="health_mode">{% for value,label in [('docker','Docker healthcheck'),('http','本机 HTTP 探测'),('running','仅检查容器持续运行（较弱）')] %}<option value="{{value}}" {% if item.health.mode == value %}selected{% endif %}>{{label}}</option>{% endfor %}</select></label>
+<label class="field">HTTP 探测地址（仅本机回环）<input name="health_url" value="{{item.health.get('url','')}}" placeholder="http://127.0.0.1:端口/health"></label>
+<p>仅容器运行不代表业务可用。更新仍跟踪原镜像引用，不自动跨版本标签。保留上一个恢复版本；数据豁免项目不保证完整恢复。</p>
+{% if page == 'registry_preview' %}<label class="check"><input type="checkbox" name="confirm_enroll" value="yes" required>确认接管并立即检查；自动策略下有更新即执行，可能中断业务，不改变全局下一轮时间</label>{% endif %}
+<button>{{'确认接管' if page == 'registry_preview' else '保存设置'}}</button></form>
+{% elif page == 'registry_remove' %}
+<a class="back" href="/projects">返回项目管理</a><h1>解除接管 · {{definition.name}}</h1><p>停止维护中心对本项目发起新的维护操作，撤销旧计划并取消未执行的首次检查。不会停止或删除容器、业务数据、备份和历史记录。</p><p>若有执行中或结果未知的操作，必须先完成对账，不能强制移除。</p>
+<form class="settings" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="registry_revision" value="{{registry_revision}}"><label class="check"><input type="checkbox" name="confirm_remove" value="yes" required>确认仅解除接管 {{definition.name}}</label><button>确认解除接管</button></form>
+{% endif %}

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+/state/
+/config/
+/secrets/
+*.sqlite3
+*.sqlite3-*
+*.key
+*.pem
+*.tar
+*.tar.gz
+/wheelhouse/
+.DS_Store
